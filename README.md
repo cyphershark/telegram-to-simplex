@@ -2,16 +2,16 @@
 telegram-to-simplex is a relay that lets you transfer news you've seen on [Telegram](https://github.com/TelegramOfficial) directly into [SimpleX Chat](https://github.com/simplex-chat/simplex-chat) groups
 
 ## Motivation
-Telegram is a great source of relatively unmoderated news, but it lacks strong chatting privacy protecting features like E2EE-by-default, MTProto audit, and a disclosed server source code. SimpleX Chat, on the opposite, is a great privacy friendly messaging tool (and an app), yet it lacks good channel support (added 30 April 2026, but still lacks huge audience for major platforms to migrate to SimpleX). 
-telegram-to-simplex acknowledges that difference and aims to create a better cross interface user experience for users of both platforms to take the best of both: communication privacy of SimpleX Chat and free speech nature of Telegram. 
+Telegram is a great source of relatively **unmoderated news**, but it lacks strong chatting privacy protecting features like E2EE-by-default, MTProto audit, and a disclosed server source code. SimpleX Chat, on the opposite, is a great **privacy friendly messaging tool** (and an app), yet it lacks good channel support (added 30 April 2026, but still lacks huge audience for major platforms to migrate to SimpleX). 
+telegram-to-simplex acknowledges that difference and aims to create **a better cross interface user experience for users of both platforms** to take the best of both: communication privacy of SimpleX Chat and free speech nature of Telegram. 
 
 ## Features
 With telegram-to-simplex, you can:
-- Send a Telegram text message to a SimpleX Chat group;
-- Send a Telegram image to a SimpleX Chat group, the image will be visible and delivered not as a usual file;
-- Send a Telegram file to a SimpleX Chat group;
-- Forward a Telegram message to a SimpleX Chat group, with source name and link on top of the final message;
-- Protect Telegram bot with a password, so that the aliens can't use your relay;
+- Send a Telegram **text message** to a SimpleX Chat group;
+- Send a Telegram **image** to a SimpleX Chat group, the image will be visible and delivered not as a usual file;
+- Send a Telegram **file** to a SimpleX Chat group;
+- **Forward a Telegram message** to a SimpleX Chat group, with source name and link on top of the final message;
+- **Protect Telegram bot with a password**, so that the aliens can't use your relay;
 
 ## Installation
 ### Flow tree
@@ -47,41 +47,32 @@ Prerequisites: create Telegram bot 👤
                     Authorize + test 👤
 ```
 ### Prerequisites
-1. Creating a Telegram bot
+0. Creating a Telegram bot
   - Go to [@BotFather](https://t.me/BotFather)
   - Send `/newbot` and assign a name to it
   - Send its USERNAME made up in your head, but it has to end with "bot". Remember the USERNAME
-  - Remember the TOKEN under the `Use this token to access the HTTP API:`
-### Universal
+  - Remember the TOKEN under the `Use this token to access the HTTP API`
+### Universal quick setup
 Open your terminal. Remember that it's better to install the application as a sudoer, not as a root, due to rights non-excessiveness.
 1. Paste in that line (Ctrl + Shift + V) and run:
 ```
 curl -sSL https://raw.githubusercontent.com/cyphershark/telegram-to-simplex/main/install.sh | bash
 ```
 This script detects your OS, installs system dependencies, the SimpleX Chat CLI, clones the repo, sets up a Python virtual environment, and creates a config file template. After it finishes, you'll need to set up your SimpleX account and fill in credentials.
-2. Complete the SimpleX Chat CLI and config setting Manual steps #2 and #4 and return here.
-3. Run: `bash setup-systemd.sh`
-4. Verify: `sudo systemctl status telegram-to-simplex`
 
+2. Complete the SimpleX Chat CLI and config setting Manual steps #2 and #4 and return here.
+
+3. Run: `bash setup-systemd.sh`
+
+4. Verify: `sudo systemctl status telegram-to-simplex`
 ### Manual installation
 #### 1. System dependencies
 
-**Debian/Ubuntu:**
-```
-sudo apt update && sudo apt install git python3 python3-venv python3-pip ffmpeg
-```
-**Arch:**
-```
-sudo pacman -S git python python-pip ffmpeg
-```
-**Fedora:**
-```
-sudo dnf install git python3 python3-pip ffmpeg
-```
-**macOS (Homebrew):**
-```
-brew install git python ffmpeg
-```
+**Debian/Ubuntu:** `sudo apt update && sudo apt install git python3 python3-venv python3-pip ffmpeg`
+**Arch:** `sudo pacman -S git python python-pip ffmpeg`
+**Fedora:** `sudo dnf install git python3 python3-pip ffmpeg`
+**macOS (Homebrew):** `brew install git python ffmpeg`
+
 #### 2. SimpleX Chat CLI
 ```
 curl -o- https://raw.githubusercontent.com/simplex-chat/simplex-chat/stable/install.sh | bash
@@ -108,8 +99,7 @@ cp .env.example .env
 
 #### 4. Configure credentials
 0. Create a strong password and copy it: `openssl rand -hex 16`
-Then edit the config file: `nano ~/telegram-to-simplex/.env`
-Put in credentials:
+1. Then edit the config file: `nano ~/telegram-to-simplex/.env` and put in credentials:
 ```
 TELEGRAM_TOKEN=YOUR_TOKEN # an API token from BotFather
 BRIDGE_PASSWORD=YOUR_PASSWORD
@@ -118,7 +108,7 @@ SIMPLEX_GROUP_NAME=YOUR_GROUP_NAME
 SIMPLEX_WS=ws://127.0.0.1:5225
 TMP_DIR=/home/YOUR_USER/telegram-to-simplex/tmp # put in your user's name
 ```
-Update permissions: `chmod 600 ~/telegram-to-simplex/.env`
+2. Update permissions: `chmod 600 ~/telegram-to-simplex/.env`
 
 #### 5. Setting up a process
 1. Create a service file for SimpleX: `sudo nano /etc/systemd/system/simplex-chat.service`
@@ -175,6 +165,7 @@ sudo systemctl status simplex-chat
 sudo systemctl status telegram-to-simplex
 ```
 **Congratulations! The program is ready to run**
+
 ## Use
 1. Open your bot by its @USERNAME
 2. Click Start on the bottom
