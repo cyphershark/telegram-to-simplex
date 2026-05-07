@@ -1,6 +1,10 @@
 # telegram-to-simplex
 telegram-to-simplex is a relay that lets you transfer news you've seen on [Telegram](https://github.com/TelegramOfficial) directly into [SimpleX Chat](https://github.com/simplex-chat/simplex-chat) groups
 
+Languages: 
+ - 🇺🇸 English
+ - [⬜️🟦⬜️ Russian](README.ru.md)
+
 ## Motivation
 Telegram is a great source of relatively **unmoderated news**, but it lacks strong chatting privacy protecting features like E2EE-by-default, MTProto audit, and a disclosed server source code. SimpleX Chat, on the opposite, is a great **privacy friendly messaging tool** (and an app), yet it lacks good channel support (added 30 April 2026, but still lacks huge audience for major platforms to migrate to SimpleX). 
 telegram-to-simplex acknowledges that difference and aims to create **a better cross interface user experience for users of both platforms** to take the best of both: communication privacy of SimpleX Chat and free speech nature of Telegram. 
