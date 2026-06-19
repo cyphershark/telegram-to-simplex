@@ -20,7 +20,7 @@ With telegram-to-simplex, you can:
 ## Installation
 ### Flow tree
 ```
-Prerequisites: create Telegram bot 👤
+Prerequisites: create Telegram bot (token) + copy SimpleX group link 👤
                               │
                        🔀 Pick path
                               │
@@ -29,26 +29,49 @@ Prerequisites: create Telegram bot 👤
       QUICK INSTALL                       MANUAL INSTALL
             │                                   │
    1. Run install.sh 🤖              1. System dependencies 👤
-            │                        2. SimpleX Chat CLI install 👤
-            │                        3. Clone repo + venv + .env 👤
+      (deps + openssl@3,             2. SimpleX Chat CLI install 👤
+       arch-aware CLI binary            (download + ad-hoc sign +
+       + ad-hoc sign + openssl           openssl symlink bridge)
+       symlink bridge, repo,         3. Clone repo + venv + .env
+       venv, .env template)             template 👤
             │                                   │
             └─────────────────┬─────────────────┘
                               ▼
-                  SimpleX profile setup 👤
+   2. Start SimpleX profile + server on :5225 👤
+      simplex-chat -d ~/simplex-data/bot -p 5225
+      └─ first run only: set a display name when prompted
+      └─ leave it running (the wizard connects to it)
                               ▼
-                  Configure credentials 👤
+   3. Run the setup.py wizard 🤖  (you answer 3 prompts 👤)
+      enter: Telegram token · bridge password · group link
+        → auto-joins the group  (/c <link>)
+        → auto-detects group id + name  (/groups)
+        → writes .env (chmod 600)
                               │
-                       🔀 Pick path
+                       🔀 Pick path: run it in the background?
                               │
             ┌─────────────────┴─────────────────┐
             ▼                                   ▼
-   3. setup-systemd.sh 🤖             5. Setup systemd manually 👤
-            │                                   │
+   4a. Background services 🤖           4b. Run manually 👤
+       macOS:  setup-launchd.sh             • keep the :5225 server
+       Linux:  setup-systemd.sh               from step 2 running
+       (auto-start at login/boot,           • open a 2nd terminal:
+        restart on crash)                      cd repo && . .venv/bin/activate
+            │                                   && python bridge.py
+   ⚠ first stop the manual :5225            │
+     server from step 2 — the agent/        │
+     unit binds the same port (clash)       │
             └─────────────────┬─────────────────┘
                               ▼
-                          Verify 👤
+   5. Verify 👤
+      lsof -nP -iTCP:5225 -sTCP:LISTEN   (server up?)
+      + service state (launchctl print / systemctl status)
+      + tail logs if anything's crash-looping
                               ▼
-                    Authorize + test 👤
+   6. Authorize + test 👤
+      Telegram: /start <password>  →  forward a post  →  check SimpleX group
+
+Legend:  👤 you do it    🤖 a script does it    🔀 branch point    ⚠ gotcha
 ```
 ### Prerequisites
 0. Creating a Telegram bot
@@ -64,20 +87,25 @@ curl -sSL https://raw.githubusercontent.com/cyphershark/telegram-to-simplex/main
 ```
 This script detects your OS, installs system dependencies, the SimpleX Chat CLI, clones the repo, sets up a Python virtual environment, and creates a config file template. After it finishes, you'll need to set up your SimpleX account and fill in credentials.
 
-2. Complete the SimpleX Chat CLI and config setting Manual steps #2 and #4 and return here.
+2. Complete the SimpleX Chat CLI: `python setup.py`
 
-3. Run: `bash setup-systemd.sh`
+3. Configure the running agent: 
+* `bash setup-systemd.sh` for Linux,
+* `bash setup-launchd.sh` for MacOS.
 
 4. Verify: `sudo systemctl status telegram-to-simplex`
-### Manual installation
-#### 1. System dependencies
+## Manual installation
+### 1. System dependencies
 
 **Debian/Ubuntu:** `sudo apt update && sudo apt install git python3 python3-venv python3-pip ffmpeg`
-**Arch:** `sudo pacman -S git python python-pip ffmpeg`
-**Fedora:** `sudo dnf install git python3 python3-pip ffmpeg`
-**macOS (Homebrew):** `brew install git python ffmpeg`
 
-#### 2. SimpleX Chat CLI
+**Arch:** `sudo pacman -S git python python-pip ffmpeg`
+
+**Fedora:** `sudo dnf install git python3 python3-pip ffmpeg`
+
+**macOS (Homebrew):** `brew install git python ffmpeg openssl@3`
+
+### 2. SimpleX Chat CLI
 ```
 curl -o- https://raw.githubusercontent.com/simplex-chat/simplex-chat/stable/install.sh | bash
 ```
@@ -102,7 +130,7 @@ cp .env.example .env
 ```
 
 #### 4. Configure credentials
-0. Create a strong password and copy it: `openssl rand -hex 16`
+0. Create a strong password and copy it: `openssl rand -hex 24`
 1. Then edit the config file: `nano ~/telegram-to-simplex/.env` and put in credentials:
 ```
 TELEGRAM_TOKEN=YOUR_TOKEN # an API token from BotFather
@@ -114,7 +142,7 @@ TMP_DIR=/home/YOUR_USER/telegram-to-simplex/tmp # put in your user's name
 ```
 2. Update permissions: `chmod 600 ~/telegram-to-simplex/.env`
 
-#### 5. Setting up a process
+#### 5. Setting up a process (Linux)
 1. Create a service file for SimpleX: `sudo nano /etc/systemd/system/simplex-chat.service`
 2. Paste in, replacing YOUR_USER with your username:
 ```
@@ -176,6 +204,9 @@ sudo systemctl status telegram-to-simplex
 3. Send `/start PASSWORD` to the bot - with your password instead of PASSWORD. For instance, if it's "123456", then send `/start 123456`. You should see "✅ Authorized. Forward channel posts to me and I'll relay them to SimpleX"
 4. Now, you can forward or directly send messages to the bot so that it will appear in the SimpleX Chat group
 4.1. For instance, open any Telegram channel, long-press a post, and select 'Forward'. Send to your bot. The bot replies '✅ Relayed' on success. The post appears in your SimpleX group with the channel name and link prepended.
+
+## Uninstall
+In case you want to uninstall the relay, run `bash uninstall.sh` - it will delete the SimpleX CLI and associated packages and processes, except for Python.
 
 ## Potential improvements
 - To add specification of more media types (e.g. audios, videos, GIFs, etc.). The advancement is hugely slowed down by SimpleX WebSocket API.

@@ -105,33 +105,127 @@ install_dependencies() {
             install_pkg git curl python3 python3-pip ffmpeg ca-certificates
             ;;
         macos)
-            install_pkg git python ffmpeg
+            # openssl@3 is required: the simplex-chat macOS binary dynamically
+            # links against Homebrew's libcrypto.3.dylib.
+            install_pkg git python ffmpeg openssl@3
             ;;
     esac
 
     ok "System dependencies installed"
 }
 
+# ---------- simplex-chat install (macOS helpers) ----------
+
+# The macOS simplex-chat binary hardcodes an ABSOLUTE OpenSSL path baked in at
+# build time, using the name "openssl@3.0" — which Homebrew never creates (its
+# formula is "openssl@3"). The prefix also differs by arch (/opt/homebrew on
+# Apple Silicon, /usr/local on Intel). Rather than guess, read the exact paths
+# the binary asks for via `otool -L` and symlink each to the real brew dylib.
+#
+# We use a symlink (not install_name_tool) on purpose: editing the Mach-O would
+# invalidate the code signature and trip "main executable failed strict
+# validation". The symlink leaves the binary byte-for-byte untouched.
+bridge_openssl_macos() {
+    local bin="$HOME/.local/bin/simplex-chat"
+    local real_lib_dir wants want base target
+    real_lib_dir="$(brew --prefix openssl@3)/lib"
+
+    wants="$(otool -L "$bin" | grep -oE '/[^ ]*openssl@[^ ]*\.dylib' | sort -u || true)"
+    if [ -z "$wants" ]; then
+        warn "Binary references no OpenSSL path — nothing to bridge."
+        return
+    fi
+
+    while read -r want; do
+        [ -n "$want" ] || continue
+        base="$(basename "$want")"
+        target="$real_lib_dir/$base"
+
+        if [ ! -f "$target" ]; then
+            fail "Expected OpenSSL lib not found: $target
+       Try: brew install openssl@3"
+        fi
+        if [ -e "$want" ]; then
+            ok "OpenSSL path already present: $want"
+        else
+            sudo mkdir -p "$(dirname "$want")"
+            sudo ln -sf "$target" "$want"
+            ok "Bridged $want -> $target"
+        fi
+    done <<< "$wants"
+}
+
+install_simplex_chat_macos() {
+    local bin="$HOME/.local/bin/simplex-chat"
+    local asset size
+
+    case "$(uname -m)" in
+        arm64)  asset="simplex-chat-macos-aarch64" ;;
+        x86_64) asset="simplex-chat-macos-x86-64"  ;;
+        *)      fail "Unknown macOS arch: $(uname -m)" ;;
+    esac
+
+    mkdir -p "$HOME/.local/bin"
+    info "Downloading $asset"
+    curl -fL "https://github.com/simplex-chat/simplex-chat/releases/latest/download/$asset" \
+        -o "$bin"
+
+    # Guard against a truncated download / HTML error page (real binary is ~30MB).
+    size="$(stat -f%z "$bin" 2>/dev/null || stat -c%s "$bin")"
+    if [ "${size:-0}" -lt 1000000 ]; then
+        fail "Downloaded simplex-chat is only ${size} bytes — download failed."
+    fi
+
+    chmod +x "$bin"
+
+    # Apple Silicon refuses to exec a binary without a valid signature, and the
+    # release binary is unsigned. Clear quarantine, then ad-hoc sign.
+    # IMPORTANT: this must be the LAST thing that touches the file. The OpenSSL
+    # bridge below only creates symlinks, so the signature stays valid.
+    if command -v codesign >/dev/null 2>&1; then
+        xattr -c "$bin" 2>/dev/null || true
+        codesign --force --sign - "$bin"
+    else
+        warn "codesign not found (install Xcode Command Line Tools: xcode-select --install)"
+    fi
+
+    bridge_openssl_macos
+}
+
 # ---------- simplex-chat install ----------
 install_simplex_chat() {
     step "Checking simplex-chat CLI"
 
-    if command -v simplex-chat >/dev/null 2>&1; then
+    # A broken binary still satisfies `command -v`, so verify it actually RUNS.
+    # (`if` conditions are exempt from `set -e`, so a failing --version is safe.)
+    if command -v simplex-chat >/dev/null 2>&1 && simplex-chat --version >/dev/null 2>&1; then
         ok "simplex-chat already installed: $(simplex-chat --version 2>&1 | head -1)"
         return
     fi
+    if command -v simplex-chat >/dev/null 2>&1; then
+        warn "Existing simplex-chat found but won't run — reinstalling"
+    fi
 
-    info "Installing simplex-chat CLI from official installer"
-    curl -fsSL https://raw.githubusercontent.com/simplex-chat/simplex-chat/stable/install.sh | bash
+    info "Installing simplex-chat CLI"
 
-    # The installer puts the binary in ~/.local/bin
+    if [ "$OS_FAMILY" = "macos" ]; then
+        install_simplex_chat_macos
+    else
+        # Linux: the official installer ships a binary that works with the
+        # distro's OpenSSL (and is signed/validated differently than macOS).
+        curl -fsSL https://raw.githubusercontent.com/simplex-chat/simplex-chat/stable/install.sh | bash
+    fi
+
     export PATH="$HOME/.local/bin:$PATH"
 
     if ! command -v simplex-chat >/dev/null 2>&1; then
         fail "simplex-chat not found on PATH after install. Add ~/.local/bin to your PATH."
     fi
+    if ! simplex-chat --version >/dev/null 2>&1; then
+        fail "simplex-chat installed but fails to run — see the error above."
+    fi
 
-    ok "simplex-chat installed"
+    ok "simplex-chat installed: $(simplex-chat --version 2>&1 | head -1)"
 }
 
 # ---------- repo + venv ----------
@@ -223,25 +317,39 @@ Next steps:
 
   1. Initialize SimpleX profile (one time, interactive):
        simplex-chat -d $SIMPLEX_DATA_DIR/bot
-     – set a display name
-     – run /ad to create a contact address
-     – run /auto_accept on
-     – join your destination group; note its ID via /groups
-     – /quit
+     - set a display name
+     - run /ad to create a contact address
+     - run /auto_accept on
+     - join your destination group via /c <GROUP_LINK>; note its ID via /groups
+     - /quit
 
   2. Edit the bridge config:
        nano $INSTALL_DIR/.env
 
-    3. Run as background services:
-        bash $INSTALL_DIR/setup-systemd.sh
+EOF
 
-    4. Verify:
-        sudo systemctl status telegram-to-simplex
+    if [ "$OS_FAMILY" = "macos" ]; then
+        cat <<EOF
+  3. Run the bridge (macOS has no systemd; run it directly or via launchd):
+        cd $INSTALL_DIR && . .venv/bin/activate && python -m bot   # adjust to the repo's entrypoint
 
-    5. Authorize yourself in Telegram:
+  4. Authorize yourself in Telegram:
         /start <BRIDGE_PASSWORD>
 
 EOF
+    else
+        cat <<EOF
+  3. Run as background services:
+        bash $INSTALL_DIR/setup-systemd.sh
+
+  4. Verify:
+        sudo systemctl status telegram-to-simplex
+
+  5. Authorize yourself in Telegram:
+        /start <BRIDGE_PASSWORD>
+
+EOF
+    fi
 }
 
 # ---------- main ----------

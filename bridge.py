@@ -1,6 +1,8 @@
 
 # Telegram to SimpleX bridge forwards messages from Telegram channels (via a bot) into a SimpleX group.
 import asyncio
+import time
+import hmac
 import json
 import logging
 import os
@@ -20,7 +22,7 @@ from telegram.ext import (
     filters,
 )
 
-# ----------------------- configs -----------------------
+# configs
 
 load_dotenv()
 TG_TOKEN = os.environ["TELEGRAM_TOKEN"]
@@ -30,6 +32,13 @@ SIMPLEX_GROUP_ID = int(os.environ["SIMPLEX_GROUP_ID"])
 SIMPLEX_GROUP_NAME = os.environ["SIMPLEX_GROUP_NAME"]
 TMP_DIR = Path(os.environ.get("TMP_DIR", "/tmp/tg-simplex"))
 TMP_DIR.mkdir(parents=True, exist_ok=True)
+# regarding password entropy security against brute forces:
+FREE_ATTEMPTS      = 3        # failures before lockout kicks in
+LOCK_BASE_SECONDS  = 4        # backoff base
+LOCK_CAP_SECONDS   = 3600     # max single lockout (1h)
+GLOBAL_WINDOW      = 60       # seconds
+GLOBAL_MAX_FAILS   = 20       # total failures across ALL users in window -> global cooldown
+
 
 AUTH_DB = Path(__file__).parent / "auth.db"
 
@@ -44,22 +53,57 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.INFO)
 logging.getLogger("websockets").setLevel(logging.INFO)
 
-# ----------------------- authentication storage -----------------------
 #  stores an sqlite3 database with users authentified to send messages via bot
+
 def _db():
     conn = sqlite3.connect(AUTH_DB)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS authed_users "
         "(user_id INTEGER PRIMARY KEY, added_at TEXT DEFAULT CURRENT_TIMESTAMP)"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS auth_attempts "
+        "(user_id INTEGER PRIMARY KEY, fails INTEGER DEFAULT 0, "
+        " locked_until REAL DEFAULT 0, last_fail REAL DEFAULT 0)"
+    )
     return conn
 
-def is_authed(user_id: int) -> bool:
+def lock_remaining(user_id: int) -> float:
     with _db() as conn:
         row = conn.execute(
-            "SELECT 1 FROM authed_users WHERE user_id=?", (user_id,)
+            "SELECT locked_until FROM auth_attempts WHERE user_id=?", (user_id,)
         ).fetchone()
-    return row is not None
+    return max(0.0, (row[0] - time.time())) if row else 0.0
+
+def record_failure(user_id: int):
+    now = time.time()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT fails FROM auth_attempts WHERE user_id=?", (user_id,)
+        ).fetchone()
+        fails = (row[0] if row else 0) + 1
+        lock = 0.0
+        if fails > FREE_ATTEMPTS:
+            lock = now + min(LOCK_CAP_SECONDS,
+                             LOCK_BASE_SECONDS * (2 ** (fails - FREE_ATTEMPTS - 1)))
+        conn.execute(
+            "INSERT INTO auth_attempts (user_id, fails, locked_until, last_fail) "
+            "VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
+            "fails=excluded.fails, locked_until=excluded.locked_until, last_fail=excluded.last_fail",
+            (user_id, fails, lock, now),
+        )
+
+def clear_failures(user_id: int):
+    with _db() as conn:
+        conn.execute("DELETE FROM auth_attempts WHERE user_id=?", (user_id,))
+
+def global_cooldown_active() -> bool:
+    cutoff = time.time() - GLOBAL_WINDOW
+    with _db() as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM auth_attempts WHERE last_fail > ?", (cutoff,)
+        ).fetchone()[0]
+    return n >= GLOBAL_MAX_FAILS
 
 def authorize(user_id: int):
     with _db() as conn:
@@ -67,7 +111,7 @@ def authorize(user_id: int):
             "INSERT OR IGNORE INTO authed_users (user_id) VALUES (?)", (user_id,)
         )
 
-# ----------------------- SimpleX client -----------------------
+# SimpleX client
 
 class SimplexClient:
     #Persistent WebSocket connection to simplex-chat CLI.
@@ -118,31 +162,57 @@ class SimplexClient:
 
 simplex = SimplexClient(SIMPLEX_WS)
 
-# ----------------------- Telegram handlers -----------------------
+# Telegram handlers
 
 album_buffers: dict[str, list] = defaultdict(list)
 album_tasks: dict[str, asyncio.Task] = {}
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+
     if is_authed(user.id):
-        await update.message.reply_text(
-            "✅ You're already authorized. Just forward messages to me and I'll relay them."
-        )
+        await update.message.reply_text("You're already authorized.")
         return
 
     args = ctx.args or []
-    if len(args) == 1 and args[0] == PASSWORD:
-        authorize(user.id)
-        log.info("Authorized user_id=%s username=%s", user.id, user.username)
+
+    # nothing supplied -> just the prompt, not counted as a failure
+    if len(args) != 1:
         await update.message.reply_text(
-            "✅ Successfull authorization. Forward channel posts to me and I'll relay them to SimpleX."
-        )
-    else:
-        await update.message.reply_text(
-            "🔒 This bot is restricted. Send `/start <password>` to authorize.",
+            "This bot is restricted. Send `/start <PASSWORD>` to authorize.",
             parse_mode="Markdown",
         )
+        return
+
+    # delete the message so the password doesn't linger in chat history
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    # global cooldown: bounds attack rate even across rotated accounts
+    if global_cooldown_active():
+        log.warning("Global auth cooldown active; rejecting user_id=%s", user.id)
+        await ctx.bot.send_message(user.id, "⏳ Too many attempts right now. Try again later.")
+        return
+
+    # per-user lockout with exponential backoff
+    remaining = lock_remaining(user.id)
+    if remaining > 0:
+        log.warning("Locked out user_id=%s (%.0fs left)", user.id, remaining)
+        await ctx.bot.send_message(user.id, f"⏳ Locked out. Try again in {int(remaining)}s.")
+        return
+
+    # constant-time comparison (free correctness; avoids timing leaks)
+    if hmac.compare_digest(args[0], PASSWORD):
+        authorize(user.id)
+        clear_failures(user.id)
+        log.info("Authorized user_id=%s username=%s", user.id, user.username)
+        await ctx.bot.send_message(user.id, "Authorized. Forward posts and I'll relay them.")
+    else:
+        record_failure(user.id)
+        log.warning("Failed auth user_id=%s username=%s", user.id, user.username)
+        await ctx.bot.send_message(user.id, "Wrong password.")
 
 async def cmd_whoami(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -316,7 +386,7 @@ async def on_forwarded(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(f"❌ Relay failed: {e}")
 
 
-# ----------------------- main -----------------------
+# main
 
 async def post_init(app):
     await simplex.connect()
