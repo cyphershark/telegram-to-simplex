@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # ---------- config ----------
-REPO_URL="${REPO_URL:-https://github.com/YOUR_USERNAME/telegram-to-simplex.git}"
+REPO_URL="${REPO_URL:-https://github.com/cyphershark/telegram-to-simplex.git}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/telegram-to-simplex}"
 SIMPLEX_DATA_DIR="${SIMPLEX_DATA_DIR:-$HOME/simplex-data}"
 
